@@ -1,0 +1,42 @@
+# Python 관련
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 가상 환경
+venv/
+ENV/
+env/
+.venv/
+.env/
+
+# Jupyter Notebook 체크포인트
+.ipynb_checkpoints/
+
+# 데이터 디렉토리 제외 (필요에 따라 조정)
+data/
+models/
+*.h5
+
+# 로그 파일
+*.log
+
+# OS 관련 파일
+.DS_Store
+Thumbs.db
+
+# IDE 관련 파일 (예: VSCode, PyCharm)
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# 배포 파일
+*.pyc
+*.pyo
+*.pyd
+
+# 기타 임시 파일
+*.swp
+*.bak
+*.tmp
