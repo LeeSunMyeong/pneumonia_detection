@@ -17,6 +17,7 @@ env/
 data/
 models/
 *.h5
+input/
 
 # 로그 파일
 *.log
