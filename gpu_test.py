@@ -213,4 +213,65 @@ if __name__ == '__main__':  # 추가된 부분
     final_acc = 100 * correct / total
     print(f'Final Validation Accuracy: {final_acc:.2f}%')
 
-    # 필요한 시각화 코드들은 여기서 추가하면 됩니다.
+    # 학습 및 검증 손실 그래프 그리기
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(1, num_epochs + 1), train_losses, label='Training Loss')
+    plt.plot(range(1, num_epochs + 1), val_losses, label='Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.title('Training and Validation Loss')
+    plt.legend()
+    plt.show()
+
+    # 학습 및 검증 정확도 그래프 그리기
+    plt.figure(figsize=(10, 5))
+    plt.plot(range(1, num_epochs + 1), train_accuracies, label='Training Accuracy')
+    plt.plot(range(1, num_epochs + 1), val_accuracies, label='Validation Accuracy')
+    plt.xlabel('Epochs')
+    plt.ylabel('Accuracy (%)')
+    plt.title('Training and Validation Accuracy')
+    plt.legend()
+    plt.show()
+
+    # 혼동 행렬 그리기
+    cm = confusion_matrix(all_labels, all_preds)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
+    disp.plot(cmap=plt.cm.Blues)
+    plt.title('Confusion Matrix')
+    plt.show()
+
+    # ROC 곡선 및 AUC 값 계산 및 그리기
+    fpr, tpr, thresholds = roc_curve(all_labels, all_probs)
+    roc_auc = auc(fpr, tpr)
+
+    plt.figure()
+    plt.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (AUC = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+    plt.xlim([-0.05, 1.05])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic')
+    plt.legend(loc="lower right")
+    plt.show()
+
+
+    # 테스트 이미지 시각화 (발표 자료용)
+    def show_test_image():
+        # 폐렴으로 라벨링된 이미지 중 하나를 선택
+        index = 0
+        while True:
+            image, label = val_dataset[index]
+            if label == 1:
+                break
+            index += 1
+
+        # 이미지 시각화
+        image_np = image.numpy().transpose((1, 2, 0))
+        plt.imshow(image_np)
+        plt.title('Sample Pneumonia Image')
+        plt.axis('off')
+        plt.show()
+
+    # 필요할 때 주석 해제하여 테스트 이미지 시각화
+    show_test_image()

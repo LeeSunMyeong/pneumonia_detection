@@ -41,3 +41,5 @@ Thumbs.db
 *.swp
 *.bak
 *.tmp
+
+best_model.pth
