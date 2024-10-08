@@ -9,14 +9,11 @@ from tqdm import tqdm
 
 import torch
 import torch.nn as nn
-import torchvision
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
-# 필요하다면 import random 추가
-import matplotlib.patches as patches
-from math import ceil
+from sklearn.metrics import classification_report  # 추가된 부분
 
 # 랜덤 시드 설정 (재현성을 위해)
 def set_seed(seed):
@@ -37,8 +34,13 @@ label_data = pd.read_csv(train_csv_path)
 columns = ['patientId', 'Target']
 label_data = label_data.filter(columns)
 
+# 클래스별 샘플 수 확인
+class_counts = label_data['Target'].value_counts()
+print('클래스별 샘플 수:')
+print(class_counts)
+
 # 데이터 분할
-train_labels, val_labels = train_test_split(label_data.values, test_size=0.1, random_state=42)
+train_labels, val_labels = train_test_split(label_data.values, test_size=0.1, random_state=42, stratify=label_data['Target'])
 
 # 이미지 경로 설정
 train_paths = [os.path.join(train_images_dir, image[0]) for image in train_labels]
@@ -47,6 +49,8 @@ val_paths = [os.path.join(train_images_dir, image[0]) for image in val_labels]
 # 데이터 변환 정의
 train_transform = transforms.Compose([
     transforms.RandomHorizontalFlip(),
+    transforms.RandomRotation(10),
+    transforms.ColorJitter(brightness=0.1, contrast=0.1),
     transforms.Resize((224, 224)),
     transforms.ToTensor()
 ])
@@ -84,11 +88,22 @@ class PneumoniaDataset(Dataset):
     def __len__(self):
         return len(self.paths)
 
-if __name__ == '__main__':  # 추가된 부분
-    # 데이터셋 및 데이터로더 생성
+if __name__ == '__main__':
+    # 데이터셋 생성
     train_dataset = PneumoniaDataset(train_paths, train_labels, transform=train_transform)
     val_dataset = PneumoniaDataset(val_paths, val_labels, transform=val_transform)
-    train_loader = DataLoader(dataset=train_dataset, batch_size=128, shuffle=True, num_workers=4)
+
+    # 클래스별 샘플 수 계산
+    targets = [label[1] for label in train_labels]
+    class_counts = np.bincount(targets)
+    class_weights = 1. / class_counts
+    samples_weights = np.array([class_weights[t] for t in targets])
+
+    # WeightedRandomSampler 정의
+    sampler = WeightedRandomSampler(samples_weights, num_samples=len(samples_weights), replacement=True)
+
+    # 데이터로더 생성
+    train_loader = DataLoader(dataset=train_dataset, batch_size=128, sampler=sampler, num_workers=4)
     val_loader = DataLoader(dataset=val_dataset, batch_size=128, shuffle=False, num_workers=4)
 
     # 모델 정의
@@ -103,7 +118,10 @@ if __name__ == '__main__':  # 추가된 부분
     model.to(device)
 
     # 손실 함수 및 옵티마이저 정의
-    criterion = nn.CrossEntropyLoss()
+    # 클래스 가중치 적용
+    class_weights = torch.tensor([class_counts[0] / sum(class_counts), class_counts[1] / sum(class_counts)], dtype=torch.float).to(device)
+    criterion = nn.CrossEntropyLoss(weight=1.0 / class_weights)
+
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
     exp_lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
@@ -119,7 +137,7 @@ if __name__ == '__main__':  # 추가된 부분
     # 학습 시작
     print("학습 시작")
     for epoch in range(num_epochs):
-        print(f"학습 {epoch}")
+        print(f"학습 {epoch+1}")
         model.train()
         running_loss = 0.0
         correct = 0
@@ -213,6 +231,11 @@ if __name__ == '__main__':  # 추가된 부분
     final_acc = 100 * correct / total
     print(f'Final Validation Accuracy: {final_acc:.2f}%')
 
+    # **평가지표 계산 및 출력**
+    report = classification_report(all_labels, all_preds, target_names=['Normal', 'Pneumonia'])
+    print('Classification Report:')
+    print(report)
+
     # 학습 및 검증 손실 그래프 그리기
     plt.figure(figsize=(10, 5))
     plt.plot(range(1, num_epochs + 1), train_losses, label='Training Loss')
@@ -254,7 +277,6 @@ if __name__ == '__main__':  # 추가된 부분
     plt.title('Receiver Operating Characteristic')
     plt.legend(loc="lower right")
     plt.show()
-
 
     # 테스트 이미지 시각화 (발표 자료용)
     def show_test_image():
