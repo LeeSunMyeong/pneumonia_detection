@@ -10,10 +10,10 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torchvision.transforms as transforms
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader
 
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
-from sklearn.metrics import classification_report  # 추가된 부분
+from sklearn.metrics import classification_report
 
 # 랜덤 시드 설정 (재현성을 위해)
 def set_seed(seed):
@@ -34,25 +34,42 @@ label_data = pd.read_csv(train_csv_path)
 columns = ['patientId', 'Target']
 label_data = label_data.filter(columns)
 
+# 중복 제거 (각 환자당 한 개의 레이블만 사용)
+label_data = label_data.drop_duplicates(subset=['patientId'])
+
 # 클래스별 샘플 수 확인
 class_counts = label_data['Target'].value_counts()
 print('클래스별 샘플 수:')
 print(class_counts)
 
+# 정상 데이터를 언더샘플링하여 폐렴 데이터와 수를 맞춤
+normal_data = label_data[label_data['Target'] == 0]
+pneumonia_data = label_data[label_data['Target'] == 1]
+
+normal_under = normal_data.sample(n=len(pneumonia_data), random_state=42)
+
+# 균형 잡힌 데이터셋 생성
+balanced_data = pd.concat([normal_under, pneumonia_data], axis=0).reset_index(drop=True)
+
+# 데이터를 섞음
+balanced_data = balanced_data.sample(frac=1, random_state=42).reset_index(drop=True)
+
 # 데이터 분할
-train_labels, val_labels = train_test_split(label_data.values, test_size=0.1, random_state=42, stratify=label_data['Target'])
+train_labels, val_labels = train_test_split(balanced_data.values, test_size=0.1, random_state=42, stratify=balanced_data['Target'])
 
 # 이미지 경로 설정
 train_paths = [os.path.join(train_images_dir, image[0]) for image in train_labels]
 val_paths = [os.path.join(train_images_dir, image[0]) for image in val_labels]
 
-# 데이터 변환 정의
+# 데이터 변환 정의 (증강 기법 적용)
 train_transform = transforms.Compose([
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomRotation(10),
-    transforms.ColorJitter(brightness=0.1, contrast=0.1),
+    transforms.RandomRotation(degrees=10),  # 회전
+    transforms.RandomResizedCrop(224, scale=(0.9, 1.1)),  # 스케일링 및 확대/축소
+    transforms.ColorJitter(brightness=0.1, contrast=0.1),  # 밝기 및 대비 조정
+    transforms.RandomAffine(degrees=0, translate=(0.05, 0.05)),  # 이동
+    transforms.GaussianBlur(kernel_size=5),  # 가우시안 블러
     transforms.Resize((224, 224)),
-    transforms.ToTensor()
+    transforms.ToTensor(),
 ])
 
 val_transform = transforms.Compose([
@@ -89,21 +106,10 @@ class PneumoniaDataset(Dataset):
         return len(self.paths)
 
 if __name__ == '__main__':
-    # 데이터셋 생성
+    # 데이터셋 및 데이터로더 생성
     train_dataset = PneumoniaDataset(train_paths, train_labels, transform=train_transform)
     val_dataset = PneumoniaDataset(val_paths, val_labels, transform=val_transform)
-
-    # 클래스별 샘플 수 계산
-    targets = [label[1] for label in train_labels]
-    class_counts = np.bincount(targets)
-    class_weights = 1. / class_counts
-    samples_weights = np.array([class_weights[t] for t in targets])
-
-    # WeightedRandomSampler 정의
-    sampler = WeightedRandomSampler(samples_weights, num_samples=len(samples_weights), replacement=True)
-
-    # 데이터로더 생성
-    train_loader = DataLoader(dataset=train_dataset, batch_size=128, sampler=sampler, num_workers=4)
+    train_loader = DataLoader(dataset=train_dataset, batch_size=128, shuffle=True, num_workers=4)
     val_loader = DataLoader(dataset=val_dataset, batch_size=128, shuffle=False, num_workers=4)
 
     # 모델 정의
@@ -118,10 +124,7 @@ if __name__ == '__main__':
     model.to(device)
 
     # 손실 함수 및 옵티마이저 정의
-    # 클래스 가중치 적용
-    class_weights = torch.tensor([class_counts[0] / sum(class_counts), class_counts[1] / sum(class_counts)], dtype=torch.float).to(device)
-    criterion = nn.CrossEntropyLoss(weight=1.0 / class_weights)
-
+    criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
     exp_lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
@@ -231,7 +234,7 @@ if __name__ == '__main__':
     final_acc = 100 * correct / total
     print(f'Final Validation Accuracy: {final_acc:.2f}%')
 
-    # **평가지표 계산 및 출력**
+    # 평가지표 계산 및 출력
     report = classification_report(all_labels, all_preds, target_names=['Normal', 'Pneumonia'])
     print('Classification Report:')
     print(report)
@@ -258,7 +261,7 @@ if __name__ == '__main__':
 
     # 혼동 행렬 그리기
     cm = confusion_matrix(all_labels, all_preds)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=[0, 1])
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Normal', 'Pneumonia'])
     disp.plot(cmap=plt.cm.Blues)
     plt.title('Confusion Matrix')
     plt.show()
@@ -278,22 +281,40 @@ if __name__ == '__main__':
     plt.legend(loc="lower right")
     plt.show()
 
-    # 테스트 이미지 시각화 (발표 자료용)
-    def show_test_image():
-        # 폐렴으로 라벨링된 이미지 중 하나를 선택
-        index = 0
-        while True:
-            image, label = val_dataset[index]
-            if label == 1:
-                break
-            index += 1
+    # 증강 기법 예시 이미지 출력
+    def show_augmentation_examples():
+        # 원본 이미지 로드
+        image = dcmread(f'{train_paths[0]}.dcm')
+        image = image.pixel_array.astype(np.float32)
+        image = (image - image.min()) / (image.max() - image.min())
+        image = (255 * image).astype(np.uint8)
+        image = Image.fromarray(image).convert('RGB')
 
-        # 이미지 시각화
-        image_np = image.numpy().transpose((1, 2, 0))
-        plt.imshow(image_np)
-        plt.title('Sample Pneumonia Image')
-        plt.axis('off')
+        fig, axs = plt.subplots(1, 6, figsize=(20, 5))
+
+        # 원본 이미지
+        axs[0].imshow(image, cmap='gray')
+        axs[0].set_title('Original')
+        axs[0].axis('off')
+
+        # 증강 기법 리스트
+        augmentations = [
+            transforms.RandomRotation(degrees=10),
+            transforms.RandomResizedCrop(224, scale=(0.9, 1.1)),
+            transforms.ColorJitter(brightness=0.1, contrast=0.1),
+            transforms.RandomAffine(degrees=0, translate=(0.05, 0.05)),
+            transforms.GaussianBlur(kernel_size=5)
+        ]
+
+        # 각 증강 기법 적용 및 출력
+        for i, aug in enumerate(augmentations):
+            augmented_image = aug(image)
+            axs[i+1].imshow(augmented_image, cmap='gray')
+            axs[i+1].set_title(aug.__class__.__name__)
+            axs[i+1].axis('off')
+
+        plt.tight_layout()
         plt.show()
 
-    # 필요할 때 주석 해제하여 테스트 이미지 시각화
-    show_test_image()
+    # 증강 기법 예시 이미지 출력
+    show_augmentation_examples()
